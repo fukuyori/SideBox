@@ -2,5 +2,5 @@ package main
 
 const (
 	appName    = "Sidebox"
-	appVersion = "0.1.0"
+	appVersion = "0.1.1"
 )

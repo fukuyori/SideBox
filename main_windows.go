@@ -51,7 +51,8 @@ const (
 	menuRefresh = 1001
 	menuReload  = 1002
 	menuOpen    = 1003
-	menuExit    = 1004
+	menuStartup = 1004
+	menuExit    = 1005
 
 	dtLeft       = 0x0000
 	dtCenter     = 0x0001
@@ -177,6 +178,9 @@ func main() {
 		return
 	}
 	currentCfg = cfg
+	if err := syncStartupRegistration(cfg.StartWithWindows); err != nil {
+		showMessage("Sidebox - 自動起動設定", err.Error())
+	}
 
 	procSetProcessDPIAwareCtx.Call(^uintptr(3)) // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
 	instance, _, _ := procGetModuleHandle.Call(0)
@@ -585,20 +589,25 @@ func showContextMenu(hwnd uintptr) {
 }
 
 func drawContextMenu(hdc uintptr) {
-	outer := rect{232, 50, 446, 204}
+	outer := rect{232, 50, 526, 241}
 	borderBrush, _, _ := procCreateSolidBrush.Call(rgb(88, 98, 115))
 	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&outer)), borderBrush)
 	procDeleteObject.Call(borderBrush)
 
-	inner := rect{233, 51, 445, 203}
+	inner := rect{233, 51, 525, 240}
 	menuBrush, _, _ := procCreateSolidBrush.Call(rgb(43, 49, 61))
 	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&inner)), menuBrush)
 	procDeleteObject.Call(menuBrush)
 
-	items := []string{"今すぐ更新", "設定を再読込", "設定ファイルを開く", "終了"}
+	cfg := configSnapshot()
+	startupLabel := "ログイン時に自動起動: オフ"
+	if cfg.StartWithWindows {
+		startupLabel = "ログイン時に自動起動: オン"
+	}
+	items := []string{"今すぐ更新", "設定を再読込", "設定ファイルを開く", startupLabel, "終了"}
 	for index, label := range items {
 		top := int32(53 + index*37)
-		drawText(hdc, label, rect{250, top, 433, top + 36}, fontDetails, rgb(235, 239, 245), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+		drawText(hdc, label, rect{250, top, 513, top + 36}, fontDetails, rgb(235, 239, 245), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
 	}
 }
 
@@ -615,10 +624,10 @@ func handleContextMenuClick(hwnd uintptr, x, y int32) bool {
 }
 
 func contextMenuCommandAt(x, y int32) uint16 {
-	if x < 233 || x >= 445 || y < 53 || y >= 201 {
+	if x < 233 || x >= 525 || y < 53 || y >= 238 {
 		return 0
 	}
-	commands := [...]uint16{menuRefresh, menuReload, menuOpen, menuExit}
+	commands := [...]uint16{menuRefresh, menuReload, menuOpen, menuStartup, menuExit}
 	return commands[(y-53)/37]
 }
 
@@ -632,6 +641,10 @@ func handleCommand(hwnd uintptr, command uint16) {
 			showMessage("Sidebox - 設定エラー", err.Error())
 			return
 		}
+		if err := syncStartupRegistration(cfg.StartWithWindows); err != nil {
+			showMessage("Sidebox - 自動起動設定", err.Error())
+			return
+		}
 		configMu.Lock()
 		currentCfg = cfg
 		configMu.Unlock()
@@ -641,6 +654,22 @@ func handleCommand(hwnd uintptr, command uint16) {
 		refreshWeather(hwnd)
 	case menuOpen:
 		openConfigFile()
+	case menuStartup:
+		cfg := configSnapshot()
+		cfg.StartWithWindows = !cfg.StartWithWindows
+		if err := syncStartupRegistration(cfg.StartWithWindows); err != nil {
+			showMessage("Sidebox - 自動起動設定", err.Error())
+			return
+		}
+		if err := writeConfig(configPath, cfg); err != nil {
+			_ = syncStartupRegistration(!cfg.StartWithWindows)
+			showMessage("Sidebox - 設定エラー", err.Error())
+			return
+		}
+		configMu.Lock()
+		currentCfg = cfg
+		configMu.Unlock()
+		procInvalidateRect.Call(hwnd, 0, 0)
 	case menuExit:
 		procDestroyWindow.Call(hwnd)
 	}

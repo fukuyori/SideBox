@@ -17,4 +17,8 @@ func TestWeatherClientLive(t *testing.T) {
 	if report.Location == "" || len(report.Daily) == 0 {
 		t.Fatalf("incomplete weather report: %+v", report)
 	}
+	if report.Daily[0].TemperatureMin == nil || report.Daily[0].TemperatureMax == nil {
+		t.Fatalf("today's temperatures were not completed: %+v", report.Daily[0])
+	}
+	t.Logf("today: min %.1f, max %.1f", *report.Daily[0].TemperatureMin, *report.Daily[0].TemperatureMax)
 }

@@ -9,22 +9,24 @@ import (
 )
 
 type appConfig struct {
-	CityCode       string  `json:"city_code"`
-	RefreshMinutes int     `json:"refresh_minutes"`
-	AlwaysOnTop    bool    `json:"always_on_top"`
-	Opacity        float64 `json:"opacity"`
-	WindowX        int32   `json:"window_x"`
-	WindowY        int32   `json:"window_y"`
+	CityCode         string  `json:"city_code"`
+	RefreshMinutes   int     `json:"refresh_minutes"`
+	AlwaysOnTop      bool    `json:"always_on_top"`
+	StartWithWindows bool    `json:"start_with_windows"`
+	Opacity          float64 `json:"opacity"`
+	WindowX          int32   `json:"window_x"`
+	WindowY          int32   `json:"window_y"`
 }
 
 func defaultConfig() appConfig {
 	return appConfig{
-		CityCode:       "130010",
-		RefreshMinutes: 15,
-		AlwaysOnTop:    true,
-		Opacity:        0.94,
-		WindowX:        32,
-		WindowY:        32,
+		CityCode:         "130010",
+		RefreshMinutes:   15,
+		AlwaysOnTop:      true,
+		StartWithWindows: false,
+		Opacity:          0.94,
+		WindowX:          32,
+		WindowY:          32,
 	}
 }
 

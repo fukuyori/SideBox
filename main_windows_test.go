@@ -13,7 +13,8 @@ func TestContextMenuCommandAt(t *testing.T) {
 		{"更新", 250, 60, menuRefresh},
 		{"再読込", 250, 100, menuReload},
 		{"設定を開く", 250, 140, menuOpen},
-		{"終了", 250, 180, menuExit},
+		{"自動起動", 250, 180, menuStartup},
+		{"終了", 250, 220, menuExit},
 		{"メニュー外", 100, 100, 0},
 	}
 	for _, tt := range tests {
