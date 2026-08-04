@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -27,43 +28,46 @@ const (
 	wsExLayered  = 0x00080000
 	wsExToolWin  = 0x00000080
 
-	swShow            = 5
-	swpNoMove         = 0x0002
-	swpNoSize         = 0x0001
-	swpNoActivate     = 0x0010
-	lwaAlpha          = 0x00000002
-	mmText            = 1
-	mmAnisotropic     = 8
-	wmCreate          = 0x0001
-	wmDestroy         = 0x0002
-	wmSize            = 0x0005
-	wmClose           = 0x0010
-	wmPaint           = 0x000F
-	wmEraseBkgnd      = 0x0014
-	wmNCCalcSize      = 0x0083
-	wmNCHitTest       = 0x0084
-	wmContextMenu     = 0x007B
-	wmNCRButtonDown   = 0x00A4
-	wmNCRButtonUp     = 0x00A5
-	wmCommand         = 0x0111
-	wmTimer           = 0x0113
-	wmLButtonDown     = 0x0201
-	wmRButtonDown     = 0x0204
-	wmRButtonUp       = 0x0205
-	wmExitSizeMove    = 0x0232
-	wmNCLButtonDown   = 0x00A1
-	wmAppWeatherReady = 0x8001
-	htCaption         = 2
-	htClient          = 1
-	htLeft            = 10
-	htRight           = 11
-	htTop             = 12
-	htTopLeft         = 13
-	htTopRight        = 14
-	htBottom          = 15
-	htBottomLeft      = 16
-	htBottomRight     = 17
-	resizeBorderWidth = 8
+	swShow             = 5
+	swpNoMove          = 0x0002
+	swpNoSize          = 0x0001
+	swpNoActivate      = 0x0010
+	lwaAlpha           = 0x00000002
+	mmText             = 1
+	mmAnisotropic      = 8
+	wmCreate           = 0x0001
+	wmDestroy          = 0x0002
+	wmSize             = 0x0005
+	wmClose            = 0x0010
+	wmPaint            = 0x000F
+	wmEraseBkgnd       = 0x0014
+	wmNCCalcSize       = 0x0083
+	wmNCHitTest        = 0x0084
+	wmContextMenu      = 0x007B
+	wmNCRButtonDown    = 0x00A4
+	wmNCRButtonUp      = 0x00A5
+	wmCommand          = 0x0111
+	wmTimer            = 0x0113
+	wmLButtonDown      = 0x0201
+	wmRButtonDown      = 0x0204
+	wmRButtonUp        = 0x0205
+	wmExitSizeMove     = 0x0232
+	wmNCLButtonDown    = 0x00A1
+	wmAppWeatherReady  = 0x8001
+	htCaption          = 2
+	htClient           = 1
+	htLeft             = 10
+	htRight            = 11
+	htTop              = 12
+	htTopLeft          = 13
+	htTopRight         = 14
+	htBottom           = 15
+	htBottomLeft       = 16
+	htBottomRight      = 17
+	resizeBorderWidth  = 8
+	errorAlreadyExists = 183
+
+	singleInstanceMutexName = `Local\Sidebox.SingleInstance`
 
 	menuRefresh = 1001
 	menuReload  = 1002
@@ -148,6 +152,8 @@ var (
 	procMessageBox             = user32.NewProc("MessageBoxW")
 	procSetProcessDPIAwareCtx  = user32.NewProc("SetProcessDpiAwarenessContext")
 	procGetModuleHandle        = kernel32.NewProc("GetModuleHandleW")
+	procCreateMutex            = kernel32.NewProc("CreateMutexW")
+	procCloseHandle            = kernel32.NewProc("CloseHandle")
 	procCreateSolidBrush       = gdi32.NewProc("CreateSolidBrush")
 	procDeleteObject           = gdi32.NewProc("DeleteObject")
 	procCreateFont             = gdi32.NewProc("CreateFontW")
@@ -186,6 +192,16 @@ var (
 
 func main() {
 	runtime.LockOSThread()
+	mutexHandle, alreadyRunning, err := acquireSingleInstanceMutex(singleInstanceMutexName)
+	if err != nil {
+		showMessage("Sidebox", err.Error())
+		return
+	}
+	if alreadyRunning {
+		return
+	}
+	defer procCloseHandle.Call(mutexHandle)
+
 	path, err := configFilePath()
 	if err != nil {
 		showMessage("Sidebox", "設定ファイルの場所を取得できません: "+err.Error())
@@ -245,6 +261,22 @@ func main() {
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&message)))
 		procDispatchMessage.Call(uintptr(unsafe.Pointer(&message)))
 	}
+}
+
+func acquireSingleInstanceMutex(name string) (handle uintptr, alreadyRunning bool, err error) {
+	handle, _, callErr := procCreateMutex.Call(
+		0,
+		0,
+		uintptr(unsafe.Pointer(utf16Ptr(name))),
+	)
+	if handle == 0 {
+		return 0, false, fmt.Errorf("二重起動チェックを初期化できません: %w", callErr)
+	}
+	if errors.Is(callErr, syscall.Errno(errorAlreadyExists)) {
+		procCloseHandle.Call(handle)
+		return 0, true, nil
+	}
+	return handle, false, nil
 }
 
 func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {

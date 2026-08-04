@@ -2,7 +2,39 @@
 
 package main
 
-import "testing"
+import (
+	"fmt"
+	"os"
+	"testing"
+	"time"
+)
+
+func TestSingleInstanceMutex(t *testing.T) {
+	name := fmt.Sprintf(`Local\Sidebox.Test.%d.%d`, os.Getpid(), time.Now().UnixNano())
+	firstHandle, alreadyRunning, err := acquireSingleInstanceMutex(name)
+	if err != nil {
+		t.Fatalf("1回目のミューテックス作成に失敗しました: %v", err)
+	}
+	if alreadyRunning {
+		t.Fatal("1回目の起動が二重起動と判定されました")
+	}
+	defer procCloseHandle.Call(firstHandle)
+
+	secondHandle, alreadyRunning, err := acquireSingleInstanceMutex(name)
+	if err != nil {
+		t.Fatalf("2回目のミューテックス作成に失敗しました: %v", err)
+	}
+	if !alreadyRunning {
+		if secondHandle != 0 {
+			procCloseHandle.Call(secondHandle)
+		}
+		t.Fatal("2回目の起動が二重起動と判定されませんでした")
+	}
+	if secondHandle != 0 {
+		procCloseHandle.Call(secondHandle)
+		t.Fatalf("二重起動判定時のハンドル = %d, want 0", secondHandle)
+	}
+}
 
 func TestContextMenuCommandAt(t *testing.T) {
 	tests := []struct {
