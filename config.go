@@ -8,6 +8,11 @@ import (
 	"path/filepath"
 )
 
+const (
+	defaultWindowWidth  = 760
+	defaultWindowHeight = 425
+)
+
 type appConfig struct {
 	CityCode         string  `json:"city_code"`
 	RefreshMinutes   int     `json:"refresh_minutes"`
@@ -16,6 +21,8 @@ type appConfig struct {
 	Opacity          float64 `json:"opacity"`
 	WindowX          int32   `json:"window_x"`
 	WindowY          int32   `json:"window_y"`
+	WindowWidth      int32   `json:"window_width"`
+	WindowHeight     int32   `json:"window_height"`
 }
 
 func defaultConfig() appConfig {
@@ -27,6 +34,8 @@ func defaultConfig() appConfig {
 		Opacity:          0.94,
 		WindowX:          32,
 		WindowY:          32,
+		WindowWidth:      defaultWindowWidth,
+		WindowHeight:     defaultWindowHeight,
 	}
 }
 
@@ -38,10 +47,24 @@ func (c appConfig) normalized() appConfig {
 	if c.RefreshMinutes < 5 {
 		c.RefreshMinutes = defaults.RefreshMinutes
 	}
+	if c.WindowWidth <= 0 {
+		c.WindowWidth = defaults.WindowWidth
+	}
+	if c.WindowHeight <= 0 {
+		c.WindowHeight = defaults.WindowHeight
+	}
 	if c.Opacity < 0.35 || c.Opacity > 1 {
 		c.Opacity = defaults.Opacity
 	}
 	return c
+}
+
+func withWindowBounds(cfg appConfig, x, y, width, height int32) appConfig {
+	cfg.WindowX = x
+	cfg.WindowY = y
+	cfg.WindowWidth = width
+	cfg.WindowHeight = height
+	return cfg
 }
 
 func configFilePath() (string, error) {

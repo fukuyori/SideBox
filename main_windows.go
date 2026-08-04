@@ -19,23 +19,29 @@ const (
 	windowWidth  = 760
 	windowHeight = 425
 
-	csHRedraw   = 0x0002
-	csVRedraw   = 0x0001
-	csDblClks   = 0x0008
-	wsPopup     = 0x80000000
-	wsExLayered = 0x00080000
-	wsExToolWin = 0x00000080
+	csHRedraw    = 0x0002
+	csVRedraw    = 0x0001
+	csDblClks    = 0x0008
+	wsPopup      = 0x80000000
+	wsThickFrame = 0x00040000
+	wsExLayered  = 0x00080000
+	wsExToolWin  = 0x00000080
 
 	swShow            = 5
 	swpNoMove         = 0x0002
 	swpNoSize         = 0x0001
 	swpNoActivate     = 0x0010
 	lwaAlpha          = 0x00000002
+	mmText            = 1
+	mmAnisotropic     = 8
 	wmCreate          = 0x0001
 	wmDestroy         = 0x0002
+	wmSize            = 0x0005
 	wmClose           = 0x0010
 	wmPaint           = 0x000F
 	wmEraseBkgnd      = 0x0014
+	wmNCCalcSize      = 0x0083
+	wmNCHitTest       = 0x0084
 	wmContextMenu     = 0x007B
 	wmNCRButtonDown   = 0x00A4
 	wmNCRButtonUp     = 0x00A5
@@ -44,9 +50,20 @@ const (
 	wmLButtonDown     = 0x0201
 	wmRButtonDown     = 0x0204
 	wmRButtonUp       = 0x0205
+	wmExitSizeMove    = 0x0232
 	wmNCLButtonDown   = 0x00A1
 	wmAppWeatherReady = 0x8001
 	htCaption         = 2
+	htClient          = 1
+	htLeft            = 10
+	htRight           = 11
+	htTop             = 12
+	htTopLeft         = 13
+	htTopRight        = 14
+	htBottom          = 15
+	htBottomLeft      = 16
+	htBottomRight     = 17
+	resizeBorderWidth = 8
 
 	menuRefresh = 1001
 	menuReload  = 1002
@@ -137,6 +154,9 @@ var (
 	procCreatePen              = gdi32.NewProc("CreatePen")
 	procSelectObject           = gdi32.NewProc("SelectObject")
 	procSetBkMode              = gdi32.NewProc("SetBkMode")
+	procSetMapMode             = gdi32.NewProc("SetMapMode")
+	procSetWindowExtEx         = gdi32.NewProc("SetWindowExtEx")
+	procSetViewportExtEx       = gdi32.NewProc("SetViewportExtEx")
 	procSetTextColor           = gdi32.NewProc("SetTextColor")
 	procMoveToEx               = gdi32.NewProc("MoveToEx")
 	procLineTo                 = gdi32.NewProc("LineTo")
@@ -203,8 +223,8 @@ func main() {
 		wsExLayered|wsExToolWin,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(utf16Ptr(appName+" "+appVersion))),
-		wsPopup,
-		uintptr(cfg.WindowX), uintptr(cfg.WindowY), windowWidth, windowHeight,
+		wsPopup|wsThickFrame,
+		uintptr(cfg.WindowX), uintptr(cfg.WindowY), uintptr(cfg.WindowWidth), uintptr(cfg.WindowHeight),
 		0, 0, instance, 0,
 	)
 	if hwnd == 0 {
@@ -212,8 +232,6 @@ func main() {
 		return
 	}
 	applyWindowOptions(hwnd, cfg)
-	region, _, _ := procCreateRoundRectRgn.Call(0, 0, windowWidth+1, windowHeight+1, 24, 24)
-	procSetWindowRgn.Call(hwnd, region, 1)
 	procShowWindow.Call(hwnd, swShow)
 	procUpdateWindow.Call(hwnd)
 	refreshWeather(hwnd)
@@ -231,11 +249,28 @@ func main() {
 
 func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	switch message {
+	case wmNCCalcSize:
+		return 0
+	case wmNCHitTest:
+		var bounds rect
+		if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds))); ok != 0 {
+			x := int32(int16(lParam & 0xffff))
+			y := int32(int16((lParam >> 16) & 0xffff))
+			return resizeHitTest(bounds, x, y)
+		}
+		return htClient
 	case wmCreate:
 		createDrawingResources()
 		procSetTimer.Call(hwnd, 1, 1000, 0)
 		cfg := configSnapshot()
 		procSetTimer.Call(hwnd, 2, uintptr(cfg.RefreshMinutes*60*1000), 0)
+		return 0
+	case wmSize:
+		width := int32(uint16(lParam & 0xffff))
+		height := int32(uint16((lParam >> 16) & 0xffff))
+		if width > 0 && height > 0 {
+			updateWindowRegion(hwnd, width, height)
+		}
 		return 0
 	case wmTimer:
 		if wParam == 2 {
@@ -254,6 +289,7 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	case wmLButtonDown:
 		x := int32(int16(lParam & 0xffff))
 		y := int32(int16((lParam >> 16) & 0xffff))
+		x, y = logicalClientPoint(hwnd, x, y)
 		if handleContextMenuClick(hwnd, x, y) {
 			return 0
 		}
@@ -269,6 +305,9 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmCommand:
 		handleCommand(hwnd, uint16(wParam&0xffff))
+		return 0
+	case wmExitSizeMove:
+		saveWindowPosition(hwnd)
 		return 0
 	case wmClose:
 		procDestroyWindow.Call(hwnd)
@@ -312,16 +351,20 @@ func paintWindow(hwnd uintptr) {
 	}
 	defer procEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 
-	var bounds rect
-	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds)))
+	var physicalBounds rect
+	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&physicalBounds)))
 	memDC, _, _ := procCreateCompatibleDC.Call(hdc)
-	bitmap, _, _ := procCreateCompatibleBitmap.Call(hdc, uintptr(bounds.Right), uintptr(bounds.Bottom))
+	bitmap, _, _ := procCreateCompatibleBitmap.Call(hdc, uintptr(physicalBounds.Right), uintptr(physicalBounds.Bottom))
 	oldBitmap, _, _ := procSelectObject.Call(memDC, bitmap)
 	defer func() {
 		procSelectObject.Call(memDC, oldBitmap)
 		procDeleteObject.Call(bitmap)
 		procDeleteDC.Call(memDC)
 	}()
+	procSetMapMode.Call(memDC, mmAnisotropic)
+	procSetWindowExtEx.Call(memDC, windowWidth, windowHeight, 0)
+	procSetViewportExtEx.Call(memDC, uintptr(physicalBounds.Right), uintptr(physicalBounds.Bottom), 0)
+	bounds := rect{0, 0, windowWidth, windowHeight}
 	procFillRect.Call(memDC, uintptr(unsafe.Pointer(&bounds)), backgroundBrush)
 	procSetBkMode.Call(memDC, transparent)
 
@@ -358,7 +401,8 @@ func paintWindow(hwnd uintptr) {
 	if contextMenuVisible {
 		drawContextMenu(memDC)
 	}
-	procBitBlt.Call(hdc, 0, 0, uintptr(bounds.Right), uintptr(bounds.Bottom), memDC, 0, 0, srccopy)
+	procSetMapMode.Call(memDC, mmText)
+	procBitBlt.Call(hdc, 0, 0, uintptr(physicalBounds.Right), uintptr(physicalBounds.Bottom), memDC, 0, 0, srccopy)
 }
 
 func drawWeeklyForecast(hdc uintptr, bounds rect, forecasts []dailyForecast) {
@@ -689,9 +733,51 @@ func applyWindowOptions(hwnd uintptr, cfg appConfig) {
 	if !cfg.AlwaysOnTop {
 		insertAfter = ^uintptr(1) // HWND_NOTOPMOST
 	}
-	procSetWindowPos.Call(hwnd, insertAfter, 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoActivate)
+	procSetWindowPos.Call(hwnd, insertAfter, 0, 0, uintptr(cfg.WindowWidth), uintptr(cfg.WindowHeight), swpNoMove|swpNoActivate)
 	alpha := byte(cfg.Opacity*255 + 0.5)
 	procSetLayeredWindowAttrs.Call(hwnd, 0, uintptr(alpha), lwaAlpha)
+	updateWindowRegion(hwnd, cfg.WindowWidth, cfg.WindowHeight)
+	procInvalidateRect.Call(hwnd, 0, 0)
+}
+
+func updateWindowRegion(hwnd uintptr, width, height int32) {
+	region, _, _ := procCreateRoundRectRgn.Call(0, 0, uintptr(width+1), uintptr(height+1), 24, 24)
+	procSetWindowRgn.Call(hwnd, region, 1)
+}
+
+func logicalClientPoint(hwnd uintptr, x, y int32) (int32, int32) {
+	var bounds rect
+	if ok, _, _ := procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds))); ok == 0 || bounds.Right <= 0 || bounds.Bottom <= 0 {
+		return x, y
+	}
+	return int32(int64(x) * int64(windowWidth) / int64(bounds.Right)), int32(int64(y) * int64(windowHeight) / int64(bounds.Bottom))
+}
+
+func resizeHitTest(bounds rect, x, y int32) uintptr {
+	left := x >= bounds.Left && x < bounds.Left+resizeBorderWidth
+	right := x < bounds.Right && x >= bounds.Right-resizeBorderWidth
+	top := y >= bounds.Top && y < bounds.Top+resizeBorderWidth
+	bottom := y < bounds.Bottom && y >= bounds.Bottom-resizeBorderWidth
+	switch {
+	case top && left:
+		return htTopLeft
+	case top && right:
+		return htTopRight
+	case bottom && left:
+		return htBottomLeft
+	case bottom && right:
+		return htBottomRight
+	case left:
+		return htLeft
+	case right:
+		return htRight
+	case top:
+		return htTop
+	case bottom:
+		return htBottom
+	default:
+		return htClient
+	}
 }
 
 func saveWindowPosition(hwnd uintptr) {
@@ -703,8 +789,14 @@ func saveWindowPosition(hwnd uintptr) {
 	if err != nil {
 		cfg = configSnapshot()
 	}
-	cfg.WindowX, cfg.WindowY = bounds.Left, bounds.Top
-	_ = writeConfig(configPath, cfg)
+	cfg = withWindowBounds(cfg, bounds.Left, bounds.Top, bounds.Right-bounds.Left, bounds.Bottom-bounds.Top)
+	if err := writeConfig(configPath, cfg); err != nil {
+		return
+	}
+	configMu.Lock()
+	currentCfg.WindowX, currentCfg.WindowY = cfg.WindowX, cfg.WindowY
+	currentCfg.WindowWidth, currentCfg.WindowHeight = cfg.WindowWidth, cfg.WindowHeight
+	configMu.Unlock()
 }
 
 func configSnapshot() appConfig {

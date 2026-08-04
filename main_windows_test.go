@@ -26,6 +26,32 @@ func TestContextMenuCommandAt(t *testing.T) {
 	}
 }
 
+func TestResizeHitTest(t *testing.T) {
+	bounds := rect{Left: 100, Top: 100, Right: 860, Bottom: 525}
+	tests := []struct {
+		name string
+		x, y int32
+		want uintptr
+	}{
+		{"左上", 100, 100, htTopLeft},
+		{"右上", 859, 100, htTopRight},
+		{"左下", 100, 524, htBottomLeft},
+		{"右下", 859, 524, htBottomRight},
+		{"左辺", 101, 300, htLeft},
+		{"右辺", 859, 300, htRight},
+		{"上辺", 400, 101, htTop},
+		{"下辺", 400, 524, htBottom},
+		{"中央", 400, 300, htClient},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resizeHitTest(bounds, tt.x, tt.y); got != tt.want {
+				t.Fatalf("resizeHitTest(%d, %d) = %d, want %d", tt.x, tt.y, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestWeatherIconForDescription(t *testing.T) {
 	tests := []struct {
 		description string
