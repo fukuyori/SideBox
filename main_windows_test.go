@@ -36,6 +36,25 @@ func TestSingleInstanceMutex(t *testing.T) {
 	}
 }
 
+func TestIsResumePowerEvent(t *testing.T) {
+	tests := []struct {
+		name  string
+		event uintptr
+		want  bool
+	}{
+		{"ユーザー操作からの復帰", pbtApmResumeSuspend, true},
+		{"自動復帰", pbtApmResumeAutomatic, true},
+		{"その他の電源イベント", 0x0004, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isResumePowerEvent(tt.event); got != tt.want {
+				t.Fatalf("isResumePowerEvent(%#x) = %t, want %t", tt.event, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestContextMenuCommandAt(t *testing.T) {
 	tests := []struct {
 		name string

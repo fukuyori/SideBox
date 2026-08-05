@@ -2,7 +2,7 @@
 
 Windowsデスクトップに、デジタル時計と気象庁の天気予報を表示する軽量ウィジェットです。Goの標準ライブラリとWin32 APIだけで動作し、天気にはAPIキー不要の「天気予報 API（livedoor 天気互換）」を利用します。
 
-バージョン: `0.1.3`
+バージョン: `0.1.4`
 
 リポジトリ: [fukuyori/SideBox](https://github.com/fukuyori/SideBox)
 

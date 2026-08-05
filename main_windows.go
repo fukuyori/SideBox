@@ -28,46 +28,55 @@ const (
 	wsExLayered  = 0x00080000
 	wsExToolWin  = 0x00000080
 
-	swShow             = 5
-	swpNoMove          = 0x0002
-	swpNoSize          = 0x0001
-	swpNoActivate      = 0x0010
-	lwaAlpha           = 0x00000002
-	mmText             = 1
-	mmAnisotropic      = 8
-	wmCreate           = 0x0001
-	wmDestroy          = 0x0002
-	wmSize             = 0x0005
-	wmClose            = 0x0010
-	wmPaint            = 0x000F
-	wmEraseBkgnd       = 0x0014
-	wmNCCalcSize       = 0x0083
-	wmNCHitTest        = 0x0084
-	wmContextMenu      = 0x007B
-	wmNCRButtonDown    = 0x00A4
-	wmNCRButtonUp      = 0x00A5
-	wmCommand          = 0x0111
-	wmTimer            = 0x0113
-	wmLButtonDown      = 0x0201
-	wmRButtonDown      = 0x0204
-	wmRButtonUp        = 0x0205
-	wmExitSizeMove     = 0x0232
-	wmNCLButtonDown    = 0x00A1
-	wmAppWeatherReady  = 0x8001
-	htCaption          = 2
-	htClient           = 1
-	htLeft             = 10
-	htRight            = 11
-	htTop              = 12
-	htTopLeft          = 13
-	htTopRight         = 14
-	htBottom           = 15
-	htBottomLeft       = 16
-	htBottomRight      = 17
-	resizeBorderWidth  = 8
-	errorAlreadyExists = 183
+	swShow                = 5
+	swpNoMove             = 0x0002
+	swpNoSize             = 0x0001
+	swpNoActivate         = 0x0010
+	lwaAlpha              = 0x00000002
+	mmText                = 1
+	mmAnisotropic         = 8
+	wmCreate              = 0x0001
+	wmDestroy             = 0x0002
+	wmSize                = 0x0005
+	wmClose               = 0x0010
+	wmPaint               = 0x000F
+	wmEraseBkgnd          = 0x0014
+	wmNCCalcSize          = 0x0083
+	wmNCHitTest           = 0x0084
+	wmContextMenu         = 0x007B
+	wmNCRButtonDown       = 0x00A4
+	wmNCRButtonUp         = 0x00A5
+	wmCommand             = 0x0111
+	wmTimer               = 0x0113
+	wmLButtonDown         = 0x0201
+	wmRButtonDown         = 0x0204
+	wmRButtonUp           = 0x0205
+	wmPowerBroadcast      = 0x0218
+	wmExitSizeMove        = 0x0232
+	wmNCLButtonDown       = 0x00A1
+	wmAppWeatherReady     = 0x8001
+	pbtApmResumeSuspend   = 0x0007
+	pbtApmResumeAutomatic = 0x0012
+	htCaption             = 2
+	htClient              = 1
+	htLeft                = 10
+	htRight               = 11
+	htTop                 = 12
+	htTopLeft             = 13
+	htTopRight            = 14
+	htBottom              = 15
+	htBottomLeft          = 16
+	htBottomRight         = 17
+	resizeBorderWidth     = 8
+	errorAlreadyExists    = 183
 
-	singleInstanceMutexName = `Local\Sidebox.SingleInstance`
+	singleInstanceMutexName  = `Local\Sidebox.SingleInstance`
+	resumeRefreshDelayMS     = 5_000
+	resumeRefreshMaxAttempts = 4
+
+	timerClock         = 1
+	timerWeather       = 2
+	timerResumeWeather = 3
 
 	menuRefresh = 1001
 	menuReload  = 1002
@@ -188,6 +197,7 @@ var (
 	backgroundBrush                               uintptr
 	fontClock, fontDate, fontWeather, fontDetails uintptr
 	contextMenuVisible                            bool
+	resumeRefreshAttempts                         int
 )
 
 func main() {
@@ -293,9 +303,9 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		return htClient
 	case wmCreate:
 		createDrawingResources()
-		procSetTimer.Call(hwnd, 1, 1000, 0)
+		procSetTimer.Call(hwnd, timerClock, 1000, 0)
 		cfg := configSnapshot()
-		procSetTimer.Call(hwnd, 2, uintptr(cfg.RefreshMinutes*60*1000), 0)
+		procSetTimer.Call(hwnd, timerWeather, uintptr(cfg.RefreshMinutes*60*1000), 0)
 		return 0
 	case wmSize:
 		width := int32(uint16(lParam & 0xffff))
@@ -305,14 +315,33 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		}
 		return 0
 	case wmTimer:
-		if wParam == 2 {
+		switch wParam {
+		case timerWeather:
 			refreshWeather(hwnd)
+		case timerResumeWeather:
+			if refreshWeather(hwnd) {
+				resumeRefreshAttempts++
+				if resumeRefreshAttempts >= resumeRefreshMaxAttempts {
+					procKillTimer.Call(hwnd, timerResumeWeather)
+				}
+			}
 		}
 		procInvalidateRect.Call(hwnd, 0, 0)
 		return 0
 	case wmAppWeatherReady:
+		if wParam != 0 {
+			procKillTimer.Call(hwnd, timerResumeWeather)
+			resumeRefreshAttempts = 0
+		}
 		procInvalidateRect.Call(hwnd, 0, 0)
 		return 0
+	case wmPowerBroadcast:
+		if isResumePowerEvent(wParam) {
+			resumeRefreshAttempts = 0
+			procKillTimer.Call(hwnd, timerResumeWeather)
+			procSetTimer.Call(hwnd, timerResumeWeather, resumeRefreshDelayMS, 0)
+			return 1
+		}
 	case wmPaint:
 		paintWindow(hwnd)
 		return 0
@@ -346,8 +375,9 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmDestroy:
 		saveWindowPosition(hwnd)
-		procKillTimer.Call(hwnd, 1)
-		procKillTimer.Call(hwnd, 2)
+		procKillTimer.Call(hwnd, timerClock)
+		procKillTimer.Call(hwnd, timerWeather)
+		procKillTimer.Call(hwnd, timerResumeWeather)
 		deleteDrawingResources()
 		procPostQuitMessage.Call(0)
 		return 0
@@ -356,9 +386,13 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	return result
 }
 
-func refreshWeather(hwnd uintptr) {
+func isResumePowerEvent(event uintptr) bool {
+	return event == pbtApmResumeSuspend || event == pbtApmResumeAutomatic
+}
+
+func refreshWeather(hwnd uintptr) bool {
 	if !weatherBusy.CompareAndSwap(false, true) {
-		return
+		return false
 	}
 	go func() {
 		defer weatherBusy.Store(false)
@@ -371,8 +405,13 @@ func refreshWeather(hwnd uintptr) {
 			weatherError = ""
 		}
 		weatherMu.Unlock()
-		procPostMessage.Call(hwnd, wmAppWeatherReady, 0, 0)
+		var succeeded uintptr
+		if err == nil {
+			succeeded = 1
+		}
+		procPostMessage.Call(hwnd, wmAppWeatherReady, succeeded, 0)
 	}()
+	return true
 }
 
 func paintWindow(hwnd uintptr) {
@@ -725,8 +764,8 @@ func handleCommand(hwnd uintptr, command uint16) {
 		currentCfg = cfg
 		configMu.Unlock()
 		applyWindowOptions(hwnd, cfg)
-		procKillTimer.Call(hwnd, 2)
-		procSetTimer.Call(hwnd, 2, uintptr(cfg.RefreshMinutes*60*1000), 0)
+		procKillTimer.Call(hwnd, timerWeather)
+		procSetTimer.Call(hwnd, timerWeather, uintptr(cfg.RefreshMinutes*60*1000), 0)
 		refreshWeather(hwnd)
 	case menuOpen:
 		openConfigFile()
