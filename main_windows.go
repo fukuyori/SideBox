@@ -70,13 +70,13 @@ const (
 	resizeBorderWidth     = 8
 	errorAlreadyExists    = 183
 
-	singleInstanceMutexName  = `Local\Sidebox.SingleInstance`
-	resumeRefreshDelayMS     = 5_000
-	resumeRefreshMaxAttempts = 4
+	singleInstanceMutexName = `Local\Sidebox.SingleInstance`
+	weatherRetryDelayMS     = 5_000
+	weatherRetryMaxAttempts = 4
 
-	timerClock         = 1
-	timerWeather       = 2
-	timerResumeWeather = 3
+	timerClock        = 1
+	timerWeather      = 2
+	timerRetryWeather = 3
 
 	menuRefresh = 1001
 	menuReload  = 1002
@@ -197,7 +197,7 @@ var (
 	backgroundBrush                               uintptr
 	fontClock, fontDate, fontWeather, fontDetails uintptr
 	contextMenuVisible                            bool
-	resumeRefreshAttempts                         int
+	weatherRetryAttempts                          int
 )
 
 func main() {
@@ -260,7 +260,7 @@ func main() {
 	applyWindowOptions(hwnd, cfg)
 	procShowWindow.Call(hwnd, swShow)
 	procUpdateWindow.Call(hwnd)
-	refreshWeather(hwnd)
+	startWeatherRetries(hwnd)
 
 	var message msg
 	for {
@@ -318,11 +318,11 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		switch wParam {
 		case timerWeather:
 			refreshWeather(hwnd)
-		case timerResumeWeather:
+		case timerRetryWeather:
 			if refreshWeather(hwnd) {
-				resumeRefreshAttempts++
-				if resumeRefreshAttempts >= resumeRefreshMaxAttempts {
-					procKillTimer.Call(hwnd, timerResumeWeather)
+				weatherRetryAttempts++
+				if weatherRetryAttempts >= weatherRetryMaxAttempts {
+					procKillTimer.Call(hwnd, timerRetryWeather)
 				}
 			}
 		}
@@ -330,16 +330,14 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmAppWeatherReady:
 		if wParam != 0 {
-			procKillTimer.Call(hwnd, timerResumeWeather)
-			resumeRefreshAttempts = 0
+			procKillTimer.Call(hwnd, timerRetryWeather)
+			weatherRetryAttempts = 0
 		}
 		procInvalidateRect.Call(hwnd, 0, 0)
 		return 0
 	case wmPowerBroadcast:
 		if isResumePowerEvent(wParam) {
-			resumeRefreshAttempts = 0
-			procKillTimer.Call(hwnd, timerResumeWeather)
-			procSetTimer.Call(hwnd, timerResumeWeather, resumeRefreshDelayMS, 0)
+			startWeatherRetries(hwnd)
 			return 1
 		}
 	case wmPaint:
@@ -377,7 +375,7 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		saveWindowPosition(hwnd)
 		procKillTimer.Call(hwnd, timerClock)
 		procKillTimer.Call(hwnd, timerWeather)
-		procKillTimer.Call(hwnd, timerResumeWeather)
+		procKillTimer.Call(hwnd, timerRetryWeather)
 		deleteDrawingResources()
 		procPostQuitMessage.Call(0)
 		return 0
@@ -388,6 +386,12 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 
 func isResumePowerEvent(event uintptr) bool {
 	return event == pbtApmResumeSuspend || event == pbtApmResumeAutomatic
+}
+
+func startWeatherRetries(hwnd uintptr) {
+	weatherRetryAttempts = 0
+	procKillTimer.Call(hwnd, timerRetryWeather)
+	procSetTimer.Call(hwnd, timerRetryWeather, weatherRetryDelayMS, 0)
 }
 
 func refreshWeather(hwnd uintptr) bool {
