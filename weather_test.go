@@ -39,23 +39,26 @@ func TestParseOptionalFloat(t *testing.T) {
 
 func TestWeatherClientFillsOnlyMissingTodayTemperatureFromAmedas(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/forecast/130010", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/forecast/130000.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{
-			"publicTime":"2026-08-04T05:00:00+09:00",
-			"link":"https://www.jma.go.jp/bosai/forecast/#area_type=offices&area_code=130000",
-			"location":{"prefecture":"東京都","city":"東京"},
-			"forecasts":[{
-				"date":"2026-08-04","dateLabel":"今日","telop":"曇り",
-				"detail":{"wind":"南の風"},
-				"temperature":{"min":{"celsius":null},"max":{"celsius":"28"}},
-				"chanceOfRain":{"T06_12":"20%"}
-			}]
-		}`)
-	})
-	mux.HandleFunc("/jma-forecast/130000.json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"timeSeries":[{},{},{"areas":[{"area":{"name":"東京","code":"44132"}}]}]}]`)
+		_, _ = io.WriteString(w, `[{
+			"publishingOffice":"気象庁",
+			"reportDatetime":"2026-08-04T11:00:00+09:00",
+			"timeSeries":[
+				{
+					"timeDefines":["2026-08-04T11:00:00+09:00","2026-08-05T00:00:00+09:00","2026-08-06T00:00:00+09:00"],
+					"areas":[{"area":{"name":"東京地方","code":"130010"},"weathers":["くもり","晴れ","雨"],"winds":["南の風","北の風","東の風"]}]
+				},
+				{
+					"timeDefines":["2026-08-04T12:00:00+09:00","2026-08-04T18:00:00+09:00","2026-08-05T00:00:00+09:00"],
+					"areas":[{"area":{"name":"東京地方","code":"130010"},"pops":["20","40","10"]}]
+				},
+				{
+					"timeDefines":["2026-08-04T09:00:00+09:00","2026-08-04T00:00:00+09:00","2026-08-05T00:00:00+09:00","2026-08-05T09:00:00+09:00"],
+					"areas":[{"area":{"name":"東京","code":"44132"},"temps":["28","28","23","30"]}]
+				}
+			]
+		}]`)
 	})
 	mux.HandleFunc("/amedas-min.csv", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
@@ -64,15 +67,23 @@ func TestWeatherClientFillsOnlyMissingTodayTemperatureFromAmedas(t *testing.T) {
 	mux.HandleFunc("/amedas-max.csv", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "maximum endpoint must not be called", http.StatusInternalServerError)
 	})
+	mux.HandleFunc("/amedas/latest_time.txt", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "2026-08-04T12:10:00+09:00\n")
+	})
+	mux.HandleFunc("/amedas/map/20260804121000.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"44132":{"humidity":[63,0]}}`)
+	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
 	client := &weatherClient{
-		httpClient:          server.Client(),
-		forecastEndpoint:    server.URL + "/forecast/",
-		jmaForecastEndpoint: server.URL + "/jma-forecast/",
-		jmaMinimumEndpoint:  server.URL + "/amedas-min.csv",
-		jmaMaximumEndpoint:  server.URL + "/amedas-max.csv",
+		httpClient:         server.Client(),
+		forecastEndpoint:   server.URL + "/forecast/",
+		jmaMinimumEndpoint: server.URL + "/amedas-min.csv",
+		jmaMaximumEndpoint: server.URL + "/amedas-max.csv",
+		jmaLatestEndpoint:  server.URL + "/amedas/latest_time.txt",
+		jmaAmedasEndpoint:  server.URL + "/amedas/map/",
 	}
 	report, err := client.fetch(context.Background(), appConfig{CityCode: "130010"})
 	if err != nil {
@@ -83,5 +94,32 @@ func TestWeatherClientFillsOnlyMissingTodayTemperatureFromAmedas(t *testing.T) {
 	}
 	if got := report.Daily[0].TemperatureMax; got == nil || *got != 28.0 {
 		t.Fatalf("TemperatureMax = %v, want forecast 28.0", got)
+	}
+	if got := report.Daily[0].PrecipitationProbability; got == nil || *got != 40 {
+		t.Fatalf("PrecipitationProbability = %v, want 40", got)
+	}
+	if report.Location != "東京都 東京地方" {
+		t.Fatalf("Location = %q, want 東京都 東京地方", report.Location)
+	}
+	if report.Humidity == nil || *report.Humidity != 63 {
+		t.Fatalf("Humidity = %v, want 63", report.Humidity)
+	}
+}
+
+func TestJMALocationName(t *testing.T) {
+	tests := []struct {
+		cityCode string
+		areaName string
+		want     string
+	}{
+		{"130010", "東京地方", "東京都 東京地方"},
+		{"140010", "東部", "神奈川県 東部"},
+		{"016010", "石狩地方", "北海道 石狩地方"},
+		{"invalid", "東部", "東部"},
+	}
+	for _, tt := range tests {
+		if got := jmaLocationName(tt.cityCode, tt.areaName); got != tt.want {
+			t.Errorf("jmaLocationName(%q, %q) = %q, want %q", tt.cityCode, tt.areaName, got, tt.want)
+		}
 	}
 }

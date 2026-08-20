@@ -122,3 +122,13 @@ func TestWeatherIconForDescription(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatHumidity(t *testing.T) {
+	humidity := 63
+	if got := formatHumidity(&humidity); got != "63%" {
+		t.Fatalf("formatHumidity(63) = %q, want 63%%", got)
+	}
+	if got := formatHumidity(nil); got != "--" {
+		t.Fatalf("formatHumidity(nil) = %q, want --", got)
+	}
+}

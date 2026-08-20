@@ -72,7 +72,7 @@ const (
 
 	singleInstanceMutexName = `Local\Sidebox.SingleInstance`
 	weatherRetryDelayMS     = 5_000
-	weatherRetryMaxAttempts = 4
+	weatherRetryMaxAttempts = 12
 
 	timerClock        = 1
 	timerWeather      = 2
@@ -163,6 +163,7 @@ var (
 	procGetModuleHandle        = kernel32.NewProc("GetModuleHandleW")
 	procCreateMutex            = kernel32.NewProc("CreateMutexW")
 	procCloseHandle            = kernel32.NewProc("CloseHandle")
+	procFreeConsole            = kernel32.NewProc("FreeConsole")
 	procCreateSolidBrush       = gdi32.NewProc("CreateSolidBrush")
 	procDeleteObject           = gdi32.NewProc("DeleteObject")
 	procCreateFont             = gdi32.NewProc("CreateFontW")
@@ -201,6 +202,9 @@ var (
 )
 
 func main() {
+	// Keep the widget free of a console window even when it was built without
+	// the windowsgui linker flag (for example, with `go run .`).
+	procFreeConsole.Call()
 	runtime.LockOSThread()
 	mutexHandle, alreadyRunning, err := acquireSingleInstanceMutex(singleInstanceMutexName)
 	if err != nil {
@@ -391,6 +395,9 @@ func isResumePowerEvent(event uintptr) bool {
 func startWeatherRetries(hwnd uintptr) {
 	weatherRetryAttempts = 0
 	procKillTimer.Call(hwnd, timerRetryWeather)
+	if refreshWeather(hwnd) {
+		weatherRetryAttempts++
+	}
 	procSetTimer.Call(hwnd, timerRetryWeather, weatherRetryDelayMS, 0)
 }
 
@@ -444,10 +451,10 @@ func paintWindow(hwnd uintptr) {
 	procSetBkMode.Call(memDC, transparent)
 
 	now := time.Now()
-	drawText(memDC, now.Format("15:04:05"), rect{24, 15, bounds.Right - 24, 99}, fontClock, rgb(245, 247, 250), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
-	drawText(memDC, "×", rect{bounds.Right - 50, 7, bounds.Right - 15, 42}, fontWeather, rgb(150, 159, 174), dtRight|dtVCenter|dtSingleLine|dtNoPrefix)
 	date := fmt.Sprintf("%s（%s）", now.Format("2006年01月02日"), japaneseWeekday(now.Weekday()))
-	drawText(memDC, date, rect{28, 97, bounds.Right - 28, 129}, fontDate, rgb(174, 183, 198), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawText(memDC, date, rect{28, 10, bounds.Right - 28, 42}, fontDate, rgb(174, 183, 198), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawText(memDC, now.Format("15:04:05"), rect{24, 43, bounds.Right - 24, 127}, fontClock, rgb(245, 247, 250), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawText(memDC, "×", rect{bounds.Right - 50, 7, bounds.Right - 15, 42}, fontWeather, rgb(150, 159, 174), dtRight|dtVCenter|dtSingleLine|dtNoPrefix)
 
 	line := rect{28, 137, bounds.Right - 28, 138}
 	divider, _, _ := procCreateSolidBrush.Call(rgb(66, 75, 91))
@@ -458,18 +465,34 @@ func paintWindow(hwnd uintptr) {
 	report, weatherErr := currentWeather, weatherError
 	weatherMu.RUnlock()
 	if weatherErr != "" {
-		drawText(memDC, "天気を取得できません", rect{28, 146, bounds.Right - 28, 181}, fontWeather, rgb(255, 166, 158), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+		errorTitle := "天気を取得できません"
+		if weatherRetryAttempts > 0 && weatherRetryAttempts < weatherRetryMaxAttempts {
+			errorTitle = fmt.Sprintf("天気を取得できません（再試行中 %d/%d）", weatherRetryAttempts, weatherRetryMaxAttempts)
+		}
+		drawText(memDC, errorTitle, rect{28, 146, bounds.Right - 28, 181}, fontWeather, rgb(255, 166, 158), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
 		drawText(memDC, shorten(weatherErr, 55), rect{28, 181, bounds.Right - 28, 215}, fontDetails, rgb(174, 183, 198), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
 	} else if report.Location == "" {
 		drawText(memDC, "天気情報を取得中…", rect{28, 151, bounds.Right - 28, 205}, fontWeather, rgb(210, 216, 226), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
 	} else {
-		drawText(memDC, report.Location+"  "+report.Description, rect{28, 143, bounds.Right - 160, 176}, fontWeather, rgb(235, 239, 245), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+		drawText(memDC, report.Location+"  今日", rect{28, 143, bounds.Right - 160, 171}, fontWeather, rgb(235, 239, 245), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
 		drawText(memDC, "気象庁予報", rect{bounds.Right - 165, 143, bounds.Right - 28, 176}, fontDetails, rgb(135, 145, 162), dtRight|dtVCenter|dtSingleLine|dtNoPrefix)
 		if len(report.Daily) > 0 {
 			today := report.Daily[0]
-			todayDetails := fmt.Sprintf("最高 %s   最低 %s   降水 %s", formatTemperature(today.TemperatureMax), formatTemperature(today.TemperatureMin), formatRainChance(today.PrecipitationProbability))
-			drawText(memDC, todayDetails, rect{28, 174, bounds.Right - 28, 201}, fontDetails, rgb(218, 222, 230), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-			drawText(memDC, "風 "+shorten(today.Wind, 70), rect{28, 199, bounds.Right - 28, 226}, fontDetails, rgb(174, 183, 198), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+			drawWeatherIcon(memDC, 62, 199, weatherIconForDescription(today.Description))
+			drawText(memDC, shorten(today.Description, 18), rect{95, 174, 256, 224}, fontWeather, rgb(225, 230, 238), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+
+			metricsLeft := int32(270)
+			metricsRight := bounds.Right - 28
+			metricWidth := (metricsRight - metricsLeft) / 4
+			labels := []string{"最高", "最低", "湿度", "降水"}
+			values := []string{formatTemperature(today.TemperatureMax), formatTemperature(today.TemperatureMin), formatHumidity(report.Humidity), formatRainChance(today.PrecipitationProbability)}
+			colors := []uintptr{rgb(255, 153, 112), rgb(103, 180, 255), rgb(132, 211, 180), rgb(103, 200, 255)}
+			for index := range labels {
+				left := metricsLeft + int32(index)*metricWidth
+				right := left + metricWidth
+				drawText(memDC, labels[index], rect{left, 174, right, 196}, fontDetails, rgb(145, 155, 172), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+				drawText(memDC, values[index], rect{left, 196, right, 224}, fontWeather, colors[index], dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+			}
 		}
 		drawWeeklyForecast(memDC, bounds, report.Daily)
 	}
@@ -486,18 +509,19 @@ func drawWeeklyForecast(hdc uintptr, bounds rect, forecasts []dailyForecast) {
 	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&line)), divider)
 	procDeleteObject.Call(divider)
 
-	drawText(hdc, "3日間の天気予報", rect{28, 239, 220, 266}, fontWeather, rgb(235, 239, 245), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawText(hdc, "天気予報", rect{28, 239, 220, 266}, fontWeather, rgb(235, 239, 245), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
 	drawText(hdc, appName+" "+appVersion, rect{bounds.Right - 180, 239, bounds.Right - 28, 266}, fontDetails, rgb(112, 122, 139), dtRight|dtVCenter|dtSingleLine|dtNoPrefix)
 
-	if len(forecasts) == 0 {
-		drawText(hdc, "予報を取得できません", rect{28, 272, bounds.Right - 28, 310}, fontDetails, rgb(174, 183, 198), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	if len(forecasts) <= 1 {
+		drawText(hdc, "明日以降の予報を取得できません", rect{28, 272, bounds.Right - 28, 310}, fontDetails, rgb(174, 183, 198), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
 		return
 	}
 	const cardsTop = int32(266)
-	count := min(len(forecasts), 3)
-	cardWidth := int32(220)
+	futureForecasts := forecasts[1:]
+	count := min(len(futureForecasts), 2)
+	cardWidth := int32(300)
 	cardsLeft := (bounds.Right - int32(count)*cardWidth) / 2
-	for index, forecast := range forecasts {
+	for index, forecast := range futureForecasts {
 		if index >= count {
 			break
 		}
@@ -513,7 +537,7 @@ func drawWeeklyForecast(hdc uintptr, bounds rect, forecasts []dailyForecast) {
 		dateLabel := fmt.Sprintf("%s  %d/%d（%s）", forecast.DateLabel, forecast.Date.Month(), forecast.Date.Day(), japaneseWeekday(forecast.Date.Weekday()))
 		drawText(hdc, dateLabel, rect{left + 3, cardsTop, right - 3, cardsTop + 25}, fontDetails, rgb(205, 211, 221), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
 		drawWeatherIcon(hdc, (left+right)/2, cardsTop+47, weatherIconForDescription(forecast.Description))
-		drawText(hdc, forecast.Description, rect{left + 3, cardsTop + 68, right - 3, cardsTop + 91}, fontDetails, rgb(205, 211, 221), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+		drawText(hdc, shorten(forecast.Description, 24), rect{left + 3, cardsTop + 68, right - 3, cardsTop + 91}, fontDetails, rgb(205, 211, 221), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
 		temperatures := fmt.Sprintf("最高 %s  最低 %s", formatTemperature(forecast.TemperatureMax), formatTemperature(forecast.TemperatureMin))
 		drawText(hdc, temperatures, rect{left + 3, cardsTop + 91, right - 3, cardsTop + 116}, fontDetails, rgb(235, 192, 153), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
 		drawText(hdc, "降水 "+formatRainChance(forecast.PrecipitationProbability), rect{left + 3, cardsTop + 116, right - 3, cardsTop + 141}, fontDetails, rgb(103, 200, 255), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
@@ -528,6 +552,13 @@ func formatTemperature(value *float64) string {
 }
 
 func formatRainChance(value *int) string {
+	if value == nil {
+		return "--"
+	}
+	return fmt.Sprintf("%d%%", *value)
+}
+
+func formatHumidity(value *int) string {
 	if value == nil {
 		return "--"
 	}
