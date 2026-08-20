@@ -58,6 +58,19 @@ func TestWeatherClientFillsOnlyMissingTodayTemperatureFromAmedas(t *testing.T) {
 					"areas":[{"area":{"name":"東京","code":"44132"},"temps":["28","28","23","30"]}]
 				}
 			]
+		},{
+			"publishingOffice":"気象庁",
+			"reportDatetime":"2026-08-04T11:00:00+09:00",
+			"timeSeries":[
+				{
+					"timeDefines":["2026-08-05T00:00:00+09:00","2026-08-06T00:00:00+09:00"],
+					"areas":[{"area":{"name":"東京都","code":"130000"},"weatherCodes":["100","300"],"pops":["","60"]}]
+				},
+				{
+					"timeDefines":["2026-08-05T00:00:00+09:00","2026-08-06T00:00:00+09:00"],
+					"areas":[{"area":{"name":"東京","code":"44132"},"tempsMin":["","21"],"tempsMax":["","29"]}]
+				}
+			]
 		}]`)
 	})
 	mux.HandleFunc("/amedas-min.csv", func(w http.ResponseWriter, _ *http.Request) {
@@ -103,6 +116,15 @@ func TestWeatherClientFillsOnlyMissingTodayTemperatureFromAmedas(t *testing.T) {
 	}
 	if report.Humidity == nil || *report.Humidity != 63 {
 		t.Fatalf("Humidity = %v, want 63", report.Humidity)
+	}
+	if got := report.Daily[2].TemperatureMin; got == nil || *got != 21 {
+		t.Fatalf("day-after TemperatureMin = %v, want 21", got)
+	}
+	if got := report.Daily[2].TemperatureMax; got == nil || *got != 29 {
+		t.Fatalf("day-after TemperatureMax = %v, want 29", got)
+	}
+	if got := report.Daily[2].PrecipitationProbability; got == nil || *got != 60 {
+		t.Fatalf("day-after PrecipitationProbability = %v, want 60", got)
 	}
 }
 

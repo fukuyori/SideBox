@@ -40,6 +40,8 @@ type jmaForecastArea struct {
 	Winds        []string `json:"winds"`
 	Pops         []string `json:"pops"`
 	Temps        []string `json:"temps"`
+	TempsMin     []string `json:"tempsMin"`
+	TempsMax     []string `json:"tempsMax"`
 }
 
 type jmaForecastTimeSeries struct {
@@ -99,7 +101,14 @@ func (c *weatherClient) fetch(ctx context.Context, cfg appConfig) (weatherReport
 	if len(response) == 0 {
 		return weatherReport{}, fmt.Errorf("地域コード %s の予報がありません", cfg.CityCode)
 	}
-	return c.buildJMAReport(ctx, response[0], cfg.CityCode)
+	report, err := c.buildJMAReport(ctx, response[0], cfg.CityCode)
+	if err != nil {
+		return weatherReport{}, err
+	}
+	if len(response) > 1 {
+		mergeJMAWeeklyForecast(&report, response[1], cfg.CityCode)
+	}
+	return report, nil
 }
 
 func (c *weatherClient) buildJMAReport(ctx context.Context, block jmaForecastBlock, cityCode string) (weatherReport, error) {
@@ -222,6 +231,72 @@ func findJMASeriesArea(series []jmaForecastTimeSeries, cityCode string, hasValue
 		}
 	}
 	return jmaForecastTimeSeries{}, jmaForecastArea{}, 0, false
+}
+
+func mergeJMAWeeklyForecast(report *weatherReport, block jmaForecastBlock, cityCode string) {
+	if report == nil || len(report.Daily) == 0 {
+		return
+	}
+	dailyIndexes := make(map[string]int, len(report.Daily))
+	for index, forecast := range report.Daily {
+		dailyIndexes[forecast.Date.Format("2006-01-02")] = index
+	}
+
+	weeklySeries, weeklyArea, areaIndex, found := findJMASeriesArea(block.TimeSeries, cityCode, func(area jmaForecastArea) bool {
+		return len(area.Pops) > 0 || len(area.WeatherCodes) > 0
+	})
+	if !found {
+		if officeCode, err := jmaOfficeCode(cityCode); err == nil {
+			weeklySeries, weeklyArea, areaIndex, found = findJMASeriesArea(block.TimeSeries, officeCode, func(area jmaForecastArea) bool {
+				return len(area.Pops) > 0 || len(area.WeatherCodes) > 0
+			})
+		}
+	}
+	if !found {
+		return
+	}
+	for index, value := range weeklyArea.Pops {
+		if value == "" || index >= len(weeklySeries.TimeDefines) {
+			continue
+		}
+		dateTime, err := time.Parse(time.RFC3339, weeklySeries.TimeDefines[index])
+		if err != nil {
+			continue
+		}
+		dailyIndex, exists := dailyIndexes[dateTime.Format("2006-01-02")]
+		if !exists || report.Daily[dailyIndex].PrecipitationProbability != nil {
+			continue
+		}
+		report.Daily[dailyIndex].PrecipitationProbability = maximumRainChance(map[string]string{"weekly": value})
+	}
+
+	for _, series := range block.TimeSeries {
+		if len(series.Areas) == 0 || (len(series.Areas[0].TempsMin) == 0 && len(series.Areas[0].TempsMax) == 0) {
+			continue
+		}
+		temperatureIndex := areaIndex
+		if temperatureIndex >= len(series.Areas) {
+			temperatureIndex = 0
+		}
+		area := series.Areas[temperatureIndex]
+		for index, dateValue := range series.TimeDefines {
+			dateTime, err := time.Parse(time.RFC3339, dateValue)
+			if err != nil {
+				continue
+			}
+			dailyIndex, exists := dailyIndexes[dateTime.Format("2006-01-02")]
+			if !exists {
+				continue
+			}
+			if report.Daily[dailyIndex].TemperatureMin == nil && index < len(area.TempsMin) {
+				report.Daily[dailyIndex].TemperatureMin = parseOptionalFloat(&area.TempsMin[index])
+			}
+			if report.Daily[dailyIndex].TemperatureMax == nil && index < len(area.TempsMax) {
+				report.Daily[dailyIndex].TemperatureMax = parseOptionalFloat(&area.TempsMax[index])
+			}
+		}
+		break
+	}
 }
 
 func jmaDateLabel(index int) string {
