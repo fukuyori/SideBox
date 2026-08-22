@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -130,5 +131,44 @@ func TestFormatHumidity(t *testing.T) {
 	}
 	if got := formatHumidity(nil); got != "--" {
 		t.Fatalf("formatHumidity(nil) = %q, want --", got)
+	}
+}
+
+func TestFitTextWithEllipsis(t *testing.T) {
+	hdc, _, _ := procCreateCompatibleDC.Call(0)
+	if hdc == 0 {
+		t.Fatal("テキスト計測用DCを作成できませんでした")
+	}
+	defer procDeleteDC.Call(hdc)
+	font := createFont(17, 400, "Yu Gothic UI")
+	if font == 0 {
+		t.Fatal("テキスト計測用フォントを作成できませんでした")
+	}
+	defer procDeleteObject.Call(font)
+
+	value := "くもり 夕方 一時 雨 所により 昼過ぎ から 夜のはじめ 頃 雷を伴う"
+	bounds := rect{0, 0, 170, 39}
+	got := fitTextWithEllipsis(hdc, value, bounds, font)
+	if got == value || !strings.HasSuffix(got, "…") {
+		t.Fatalf("fitTextWithEllipsis() = %q, want ellipsis", got)
+	}
+	if !textFits(hdc, got, bounds, font) {
+		t.Fatalf("省略後の文字列が表示領域に収まりません: %q", got)
+	}
+
+	shortValue := "晴れ"
+	if got := fitTextWithEllipsis(hdc, shortValue, bounds, font); got != shortValue {
+		t.Fatalf("短い予報 = %q, want %q", got, shortValue)
+	}
+
+	todayValue := "くもり 夕方 一時 雨 所により 昼過ぎ から 夜のはじめ"
+	wideBounds := rect{0, 0, 688, 24}
+	if got := fitSingleLineTextWithEllipsis(hdc, todayValue, wideBounds, font); got != todayValue {
+		t.Fatalf("横長欄の当日予報 = %q, want %q", got, todayValue)
+	}
+	narrowBounds := rect{0, 0, 120, 24}
+	got = fitSingleLineTextWithEllipsis(hdc, todayValue, narrowBounds, font)
+	if got == todayValue || !strings.HasSuffix(got, "…") {
+		t.Fatalf("狭い横長欄の当日予報 = %q, want ellipsis", got)
 	}
 }
