@@ -18,6 +18,7 @@ type appConfig struct {
 	RefreshMinutes   int     `json:"refresh_minutes"`
 	AlwaysOnTop      bool    `json:"always_on_top"`
 	StartWithWindows bool    `json:"start_with_windows"`
+	StartAtLogin     bool    `json:"start_at_login,omitempty"`
 	Opacity          float64 `json:"opacity"`
 	WindowX          int32   `json:"window_x"`
 	WindowY          int32   `json:"window_y"`

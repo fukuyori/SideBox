@@ -36,6 +36,7 @@ func TestWithWindowBoundsPreservesOtherSettings(t *testing.T) {
 		RefreshMinutes:   30,
 		AlwaysOnTop:      false,
 		StartWithWindows: true,
+		StartAtLogin:     true,
 		Opacity:          0.8,
 	}
 	got := withWindowBounds(cfg, -120, 240, 988, 553)
@@ -44,6 +45,7 @@ func TestWithWindowBoundsPreservesOtherSettings(t *testing.T) {
 	}
 	if got.CityCode != cfg.CityCode || got.RefreshMinutes != cfg.RefreshMinutes ||
 		got.AlwaysOnTop != cfg.AlwaysOnTop || got.StartWithWindows != cfg.StartWithWindows ||
+		got.StartAtLogin != cfg.StartAtLogin ||
 		got.Opacity != cfg.Opacity {
 		t.Fatalf("other settings changed: got %+v, want %+v", got, cfg)
 	}
