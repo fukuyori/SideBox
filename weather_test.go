@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestMaximumRainChance(t *testing.T) {
@@ -97,6 +98,9 @@ func TestWeatherClientFillsOnlyMissingTodayTemperatureFromAmedas(t *testing.T) {
 		jmaMaximumEndpoint: server.URL + "/amedas-max.csv",
 		jmaLatestEndpoint:  server.URL + "/amedas/latest_time.txt",
 		jmaAmedasEndpoint:  server.URL + "/amedas/map/",
+		now: func() time.Time {
+			return time.Date(2026, 8, 4, 12, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+		},
 	}
 	report, err := client.fetch(context.Background(), appConfig{CityCode: "130010"})
 	if err != nil {
@@ -126,6 +130,64 @@ func TestWeatherClientFillsOnlyMissingTodayTemperatureFromAmedas(t *testing.T) {
 	if got := report.Daily[2].PrecipitationProbability; got == nil || *got != 60 {
 		t.Fatalf("day-after PrecipitationProbability = %v, want 60", got)
 	}
+}
+
+func TestBuildJMAReportSkipsPreviousDayAfterMidnight(t *testing.T) {
+	location := time.FixedZone("JST", 9*60*60)
+	client := &weatherClient{now: func() time.Time {
+		return time.Date(2026, 8, 27, 4, 30, 0, 0, location)
+	}}
+	var block jmaForecastBlock
+	block.TimeSeries = []jmaForecastTimeSeries{
+		{
+			TimeDefines: []string{
+				"2026-08-26T17:00:00+09:00",
+				"2026-08-27T00:00:00+09:00",
+				"2026-08-28T00:00:00+09:00",
+			},
+			Areas: []jmaForecastArea{
+				forecastArea("東部", "140010", []string{"晴れ", "くもり", "雨"}, nil),
+			},
+		},
+		{
+			TimeDefines: []string{
+				"2026-08-27T00:00:00+09:00",
+				"2026-08-27T09:00:00+09:00",
+			},
+			Areas: []jmaForecastArea{
+				forecastArea("横浜", "station", nil, []string{"27", "31"}),
+			},
+		},
+	}
+
+	report, err := client.buildJMAReport(context.Background(), block, "140010")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Daily) != 2 {
+		t.Fatalf("Daily count = %d, want 2: %+v", len(report.Daily), report.Daily)
+	}
+	if got := report.Daily[0].Date.Format("2006-01-02"); got != "2026-08-27" {
+		t.Fatalf("today date = %s, want 2026-08-27", got)
+	}
+	if report.Daily[0].DateLabel != "今日" || report.Daily[1].DateLabel != "明日" {
+		t.Fatalf("date labels = %q, %q", report.Daily[0].DateLabel, report.Daily[1].DateLabel)
+	}
+	if got := report.Daily[0].TemperatureMin; got == nil || *got != 27 {
+		t.Fatalf("today minimum = %v, want 27", got)
+	}
+	if got := report.Daily[0].TemperatureMax; got == nil || *got != 31 {
+		t.Fatalf("today maximum = %v, want 31", got)
+	}
+}
+
+func forecastArea(name, code string, weathers, temperatures []string) jmaForecastArea {
+	var area jmaForecastArea
+	area.Area.Name = name
+	area.Area.Code = code
+	area.Weathers = weathers
+	area.Temps = temperatures
+	return area
 }
 
 func TestJMALocationName(t *testing.T) {

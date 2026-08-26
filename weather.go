@@ -28,6 +28,7 @@ type weatherClient struct {
 	jmaMaximumEndpoint string
 	jmaLatestEndpoint  string
 	jmaAmedasEndpoint  string
+	now                func() time.Time
 }
 
 type jmaForecastArea struct {
@@ -82,6 +83,7 @@ func newWeatherClient() *weatherClient {
 		jmaMaximumEndpoint: defaultJMAMaximumEndpoint,
 		jmaLatestEndpoint:  defaultJMALatestEndpoint,
 		jmaAmedasEndpoint:  defaultJMAAmedasEndpoint,
+		now:                time.Now,
 	}
 }
 
@@ -121,6 +123,7 @@ func (c *weatherClient) buildJMAReport(ctx context.Context, block jmaForecastBlo
 	publishedAt, _ := time.Parse(time.RFC3339, block.ReportDatetime)
 	report := weatherReport{Location: jmaLocationName(cityCode, weatherArea.Area.Name), PublishedAt: publishedAt}
 	dailyIndexes := make(map[string]int)
+	now := c.currentTime()
 	for index, value := range weatherArea.Weathers {
 		if index >= len(weatherSeries.TimeDefines) {
 			break
@@ -129,9 +132,13 @@ func (c *weatherClient) buildJMAReport(ctx context.Context, block jmaForecastBlo
 		if err != nil {
 			continue
 		}
+		dayOffset := forecastDayOffset(now, dateTime)
+		if dayOffset < 0 || dayOffset > 2 {
+			continue
+		}
 		forecast := dailyForecast{
 			Date:        dateTime,
-			DateLabel:   jmaDateLabel(len(report.Daily)),
+			DateLabel:   jmaDateLabel(dayOffset),
 			Description: compactJapaneseText(value),
 		}
 		if index < len(weatherArea.Winds) {
@@ -220,6 +227,21 @@ func (c *weatherClient) buildJMAReport(ctx context.Context, block jmaForecastBlo
 		}
 	}
 	return report, nil
+}
+
+func (c *weatherClient) currentTime() time.Time {
+	if c != nil && c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+func forecastDayOffset(now, forecast time.Time) int {
+	location := forecast.Location()
+	now = now.In(location)
+	currentDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	forecastDate := time.Date(forecast.Year(), forecast.Month(), forecast.Day(), 0, 0, 0, 0, location)
+	return int(forecastDate.Sub(currentDate) / (24 * time.Hour))
 }
 
 func findJMASeriesArea(series []jmaForecastTimeSeries, cityCode string, hasValues func(jmaForecastArea) bool) (jmaForecastTimeSeries, jmaForecastArea, int, bool) {

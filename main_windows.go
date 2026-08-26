@@ -189,18 +189,29 @@ var (
 )
 
 var (
-	configMu                                      sync.RWMutex
-	currentCfg                                    appConfig
-	configPath                                    string
-	weatherMu                                     sync.RWMutex
-	currentWeather                                weatherReport
-	weatherError                                  string
-	weatherBusy                                   atomic.Bool
-	client                                        = newWeatherClient()
-	backgroundBrush                               uintptr
-	fontClock, fontDate, fontWeather, fontDetails uintptr
-	contextMenuVisible                            bool
-	weatherRetryAttempts                          int
+	configMu               sync.RWMutex
+	currentCfg             appConfig
+	configPath             string
+	weatherMu              sync.RWMutex
+	currentWeather         weatherReport
+	weatherError           string
+	weatherBusy            atomic.Bool
+	client                 = newWeatherClient()
+	backgroundBrush        uintptr
+	fontClock              uintptr
+	fontDate               uintptr
+	fontWeather            uintptr
+	fontDetails            uintptr
+	fontPrimaryLabel       uintptr
+	fontSecondaryLabel     uintptr
+	fontPrimaryDescription uintptr
+	fontMetricLabel        uintptr
+	fontPrimaryValue       uintptr
+	fontSecondaryValue     uintptr
+	fontSmall              uintptr
+	fontVersion            uintptr
+	contextMenuVisible     bool
+	weatherRetryAttempts   int
 )
 
 func main() {
@@ -451,56 +462,40 @@ func paintWindow(hwnd uintptr) {
 	bounds := rect{0, 0, windowWidth, windowHeight}
 	procFillRect.Call(memDC, uintptr(unsafe.Pointer(&bounds)), backgroundBrush)
 	procSetBkMode.Call(memDC, transparent)
+	drawRoundedPanel(memDC, rect{1, 1, bounds.Right - 1, bounds.Bottom - 1}, 22, rgb(14, 19, 28), rgb(45, 49, 57), 1)
 
 	now := time.Now()
-	date := fmt.Sprintf("%s（%s）", now.Format("2006年01月02日"), japaneseWeekday(now.Weekday()))
-	drawText(memDC, appName+" "+appVersion, rect{16, 8, 180, 36}, fontDetails, rgb(112, 122, 139), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-	drawText(memDC, date, rect{28, 10, bounds.Right - 28, 42}, fontDate, rgb(174, 183, 198), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
-	drawText(memDC, now.Format("15:04:05"), rect{24, 43, bounds.Right - 24, 127}, fontClock, rgb(245, 247, 250), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
-	drawText(memDC, "×", rect{bounds.Right - 50, 7, bounds.Right - 15, 42}, fontWeather, rgb(150, 159, 174), dtRight|dtVCenter|dtSingleLine|dtNoPrefix)
-
-	line := rect{28, 137, bounds.Right - 28, 138}
-	divider, _, _ := procCreateSolidBrush.Call(rgb(66, 75, 91))
-	procFillRect.Call(memDC, uintptr(unsafe.Pointer(&line)), divider)
-	procDeleteObject.Call(divider)
+	date := fmt.Sprintf("%d月%d日 %s曜日", now.Month(), now.Day(), japaneseWeekday(now.Weekday()))
+	drawText(memDC, appName+" "+appVersion, rect{34, 7, 254, 22}, fontVersion, rgb(122, 122, 122), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawText(memDC, now.Format("15:04:05"), rect{30, 24, 300, 92}, fontClock, rgb(255, 255, 255), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawText(memDC, date, rect{34, 90, 294, 117}, fontDate, rgb(173, 173, 173), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawText(memDC, "×", rect{bounds.Right - 42, 8, bounds.Right - 10, 38}, fontWeather, rgb(184, 184, 184), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
 
 	weatherMu.RLock()
 	report, weatherErr := currentWeather, weatherError
 	weatherMu.RUnlock()
+	const weatherX = int32(350)
+	if report.Location != "" {
+		drawText(memDC, report.Location, rect{weatherX, 32, bounds.Right - 52, 60}, fontWeather, rgb(255, 255, 255), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	}
+	drawText(memDC, "気象庁  3日間予報", rect{weatherX, 65, bounds.Right - 52, 86}, fontDetails, rgb(133, 133, 133), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	if weatherBusy.Load() && len(report.Daily) > 0 {
+		drawText(memDC, "更新中…", rect{weatherX, 88, bounds.Right - 52, 107}, fontSmall, rgb(115, 189, 255), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	}
 	if weatherErr != "" {
 		errorTitle := "天気を取得できません"
 		if weatherRetryAttempts > 0 && weatherRetryAttempts < weatherRetryMaxAttempts {
 			errorTitle = fmt.Sprintf("天気を取得できません（再試行中 %d/%d）", weatherRetryAttempts, weatherRetryMaxAttempts)
 		}
-		drawText(memDC, errorTitle, rect{28, 146, bounds.Right - 28, 181}, fontWeather, rgb(255, 166, 158), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-		drawText(memDC, shorten(weatherErr, 55), rect{28, 181, bounds.Right - 28, 215}, fontDetails, rgb(174, 183, 198), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+		status := errorTitle + ": " + weatherErr
+		statusBounds := rect{weatherX, 88, bounds.Right - 52, 119}
+		status = fitTextWithEllipsis(memDC, status, statusBounds, fontDetails)
+		drawText(memDC, status, statusBounds, fontDetails, rgb(255, 140, 140), dtLeft|dtWordBreak|dtNoPrefix)
 	} else if report.Location == "" {
-		drawText(memDC, "天気情報を取得中…", rect{28, 151, bounds.Right - 28, 205}, fontWeather, rgb(210, 216, 226), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-	} else {
-		drawText(memDC, report.Location+"  今日", rect{28, 143, bounds.Right - 160, 170}, fontWeather, rgb(235, 239, 245), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-		drawText(memDC, "気象庁予報", rect{bounds.Right - 165, 143, bounds.Right - 28, 170}, fontDetails, rgb(135, 145, 162), dtRight|dtVCenter|dtSingleLine|dtNoPrefix)
-		if len(report.Daily) > 0 {
-			today := report.Daily[0]
-			drawWeatherIcon(memDC, 62, 194, weatherIconForDescription(today.Description))
-
-			metricsLeft := int32(270)
-			metricsRight := bounds.Right - 28
-			metricWidth := (metricsRight - metricsLeft) / 4
-			labels := []string{"最高", "最低", "湿度", "降水"}
-			values := []string{formatTemperature(today.TemperatureMax), formatTemperature(today.TemperatureMin), formatHumidity(report.Humidity), formatRainChance(today.PrecipitationProbability)}
-			colors := []uintptr{rgb(255, 153, 112), rgb(103, 180, 255), rgb(132, 211, 180), rgb(103, 200, 255)}
-			for index := range labels {
-				left := metricsLeft + int32(index)*metricWidth
-				right := left + metricWidth
-				drawText(memDC, labels[index], rect{left, 171, right, 190}, fontDetails, rgb(145, 155, 172), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
-				drawText(memDC, values[index], rect{left, 190, right, 214}, fontWeather, colors[index], dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
-			}
-
-			descriptionBounds := rect{36, 220, bounds.Right - 36, 246}
-			description := fitSingleLineTextWithEllipsis(memDC, today.Description, descriptionBounds, fontDetails)
-			drawText(memDC, description, descriptionBounds, fontDetails, rgb(225, 230, 238), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-		}
-		drawWeeklyForecast(memDC, bounds, report.Daily)
+		drawText(memDC, "天気を取得しています…", rect{weatherX, 88, bounds.Right - 52, 119}, fontDetails, rgb(184, 184, 184), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	}
+	if len(report.Daily) > 0 {
+		drawForecastCards(memDC, bounds, report)
 	}
 	if contextMenuVisible {
 		drawContextMenu(memDC)
@@ -509,46 +504,102 @@ func paintWindow(hwnd uintptr) {
 	procBitBlt.Call(hdc, 0, 0, uintptr(physicalBounds.Right), uintptr(physicalBounds.Bottom), memDC, 0, 0, srccopy)
 }
 
-func drawWeeklyForecast(hdc uintptr, bounds rect, forecasts []dailyForecast) {
-	line := rect{28, 253, bounds.Right - 28, 254}
-	divider, _, _ := procCreateSolidBrush.Call(rgb(66, 75, 91))
-	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&line)), divider)
-	procDeleteObject.Call(divider)
-
-	drawText(hdc, "天気予報", rect{28, 259, 220, 284}, fontWeather, rgb(235, 239, 245), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-
-	if len(forecasts) <= 1 {
-		drawText(hdc, "明日以降の予報を取得できません", rect{28, 290, bounds.Right - 28, 328}, fontDetails, rgb(174, 183, 198), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-		return
-	}
-	const cardsTop = int32(284)
-	futureForecasts := forecasts[1:]
-	count := min(len(futureForecasts), 2)
-	cardWidth := int32(340)
-	cardsLeft := (bounds.Right - int32(count)*cardWidth) / 2
-	for index, forecast := range futureForecasts {
-		if index >= count {
-			break
+func drawForecastCards(hdc uintptr, bounds rect, report weatherReport) {
+	areas := forecastCardRects(bounds)
+	count := min(len(report.Daily), len(areas))
+	for index := 0; index < count; index++ {
+		var humidity *int
+		if index == 0 {
+			humidity = report.Humidity
 		}
-		left := cardsLeft + int32(index)*cardWidth
-		right := left + cardWidth
-		if index > 0 {
-			separator := rect{left, cardsTop + 5, left + 1, bounds.Bottom - 4}
-			separatorBrush, _, _ := procCreateSolidBrush.Call(rgb(53, 61, 75))
-			procFillRect.Call(hdc, uintptr(unsafe.Pointer(&separator)), separatorBrush)
-			procDeleteObject.Call(separatorBrush)
-		}
-
-		dateLabel := fmt.Sprintf("%s  %d/%d（%s）", forecast.DateLabel, forecast.Date.Month(), forecast.Date.Day(), japaneseWeekday(forecast.Date.Weekday()))
-		drawText(hdc, dateLabel, rect{left + 3, cardsTop, right - 3, cardsTop + 23}, fontDetails, rgb(205, 211, 221), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
-		drawWeatherIcon(hdc, (left+right)/2, cardsTop+39, weatherIconForDescription(forecast.Description))
-		descriptionBounds := rect{left + 5, cardsTop + 58, right - 5, cardsTop + 95}
-		description := fitTextWithEllipsis(hdc, forecast.Description, descriptionBounds, fontDetails)
-		drawText(hdc, description, descriptionBounds, fontDetails, rgb(205, 211, 221), dtCenter|dtWordBreak|dtNoPrefix)
-		temperatures := fmt.Sprintf("最高 %s  最低 %s", formatTemperature(forecast.TemperatureMax), formatTemperature(forecast.TemperatureMin))
-		drawText(hdc, temperatures, rect{left + 3, cardsTop + 96, right - 3, cardsTop + 117}, fontDetails, rgb(235, 192, 153), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
-		drawText(hdc, "降水 "+formatRainChance(forecast.PrecipitationProbability), rect{left + 3, cardsTop + 118, right - 3, cardsTop + 139}, fontDetails, rgb(103, 200, 255), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+		drawForecastCard(hdc, report.Daily[index], areas[index], index == 0, humidity)
 	}
+}
+
+func forecastCardRects(bounds rect) [3]rect {
+	const (
+		left     = int32(24)
+		gap      = int32(12)
+		cardsTop = int32(127)
+	)
+	contentWidth := bounds.Right - left*2
+	usableWidth := contentWidth - gap*2
+	todayWidth := usableWidth * 42 / 100
+	futureWidth := (usableWidth - todayWidth) / 2
+	cardHeight := max(int32(235), bounds.Bottom-cardsTop-24)
+	return [3]rect{
+		{left, cardsTop, left + todayWidth, cardsTop + cardHeight},
+		{left + todayWidth + gap, cardsTop, left + todayWidth + gap + futureWidth, cardsTop + cardHeight},
+		{left + todayWidth + gap*2 + futureWidth, cardsTop, bounds.Right - left, cardsTop + cardHeight},
+	}
+}
+
+func drawForecastCard(hdc uintptr, forecast dailyForecast, bounds rect, primary bool, humidity *int) {
+	fillColor := rgb(23, 29, 41)
+	borderColor := rgb(42, 47, 58)
+	borderWidth := int32(1)
+	labelFont := fontSecondaryLabel
+	descriptionFont := fontDetails
+	valueFont := fontSecondaryValue
+	labelColor := rgb(191, 191, 191)
+	if primary {
+		fillColor = rgb(23, 43, 64)
+		borderColor = rgb(49, 102, 148)
+		borderWidth = 2
+		labelFont = fontPrimaryLabel
+		descriptionFont = fontPrimaryDescription
+		valueFont = fontPrimaryValue
+		labelColor = rgb(156, 209, 255)
+	}
+	drawRoundedPanel(hdc, bounds, 16, fillColor, borderColor, borderWidth)
+
+	drawText(hdc, forecast.DateLabel, rect{bounds.Left + 18, bounds.Top + 14, bounds.Right - 18, bounds.Top + 38}, labelFont, labelColor, dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawWeatherIcon(hdc, (bounds.Left+bounds.Right)/2, bounds.Top+71, weatherIconForDescription(forecast.Description))
+	descriptionBounds := rect{bounds.Left + 18, bounds.Top + 101, bounds.Right - 18, bounds.Top + 166}
+	description := fitTextWithEllipsis(hdc, forecast.Description, descriptionBounds, descriptionFont)
+	drawText(hdc, description, descriptionBounds, descriptionFont, rgb(237, 237, 237), dtLeft|dtWordBreak|dtNoPrefix)
+
+	divider := rect{bounds.Left + 16, bounds.Top + 174, bounds.Right - 16, bounds.Top + 175}
+	dividerBrush, _, _ := procCreateSolidBrush.Call(rgb(47, 56, 68))
+	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&divider)), dividerBrush)
+	procDeleteObject.Call(dividerBrush)
+
+	metricCount := int32(3)
+	if primary {
+		metricCount = 4
+	}
+	metricsLeft := bounds.Left + 10
+	metricWidth := (bounds.Right - bounds.Left - 20) / metricCount
+	metricTop := bounds.Top + 185
+	drawForecastMetric(hdc, "最高", formatDegree(forecast.TemperatureMax), rect{metricsLeft, metricTop, metricsLeft + metricWidth, metricTop + 48}, rgb(255, 133, 97), valueFont)
+	drawForecastMetric(hdc, "最低", formatDegree(forecast.TemperatureMin), rect{metricsLeft + metricWidth, metricTop, metricsLeft + metricWidth*2, metricTop + 48}, rgb(102, 184, 255), valueFont)
+	drawForecastMetric(hdc, "降水", formatPercent(forecast.PrecipitationProbability), rect{metricsLeft + metricWidth*2, metricTop, metricsLeft + metricWidth*3, metricTop + 48}, rgb(87, 204, 255), valueFont)
+	if primary {
+		drawForecastMetric(hdc, "湿度", formatPercent(humidity), rect{metricsLeft + metricWidth*3, metricTop, bounds.Right - 10, metricTop + 48}, rgb(110, 224, 194), valueFont)
+	}
+
+	if forecast.Wind != "" {
+		windBounds := rect{bounds.Left + 18, bounds.Bottom - 32, bounds.Right - 18, bounds.Bottom - 14}
+		wind := fitSingleLineTextWithEllipsis(hdc, "風  "+forecast.Wind, windBounds, fontSmall)
+		drawText(hdc, wind, windBounds, fontSmall, rgb(122, 122, 122), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+	}
+}
+
+func drawForecastMetric(hdc uintptr, label, value string, bounds rect, color, valueFont uintptr) {
+	drawText(hdc, label, rect{bounds.Left, bounds.Top, bounds.Right, bounds.Top + 18}, fontMetricLabel, rgb(143, 143, 143), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+	drawText(hdc, value, rect{bounds.Left, bounds.Top + 18, bounds.Right, bounds.Top + 48}, valueFont, color, dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+}
+
+func drawRoundedPanel(hdc uintptr, bounds rect, radius int32, fillColor, borderColor uintptr, borderWidth int32) {
+	pen, _, _ := procCreatePen.Call(0, uintptr(borderWidth), borderColor)
+	brush, _, _ := procCreateSolidBrush.Call(fillColor)
+	oldPen, _, _ := procSelectObject.Call(hdc, pen)
+	oldBrush, _, _ := procSelectObject.Call(hdc, brush)
+	procRoundRect.Call(hdc, uintptr(bounds.Left), uintptr(bounds.Top), uintptr(bounds.Right), uintptr(bounds.Bottom), uintptr(radius*2), uintptr(radius*2))
+	procSelectObject.Call(hdc, oldBrush)
+	procSelectObject.Call(hdc, oldPen)
+	procDeleteObject.Call(brush)
+	procDeleteObject.Call(pen)
 }
 
 func fitTextWithEllipsis(hdc uintptr, value string, bounds rect, font uintptr) string {
@@ -631,6 +682,20 @@ func formatTemperature(value *float64) string {
 		return "--"
 	}
 	return fmt.Sprintf("%.0f°C", *value)
+}
+
+func formatDegree(value *float64) string {
+	if value == nil {
+		return "--°"
+	}
+	return fmt.Sprintf("%.0f°", *value)
+}
+
+func formatPercent(value *int) string {
+	if value == nil {
+		return "--%"
+	}
+	return fmt.Sprintf("%d%%", *value)
 }
 
 func formatRainChance(value *int) string {
@@ -783,15 +848,37 @@ func drawFog(hdc uintptr, x, y int32) {
 }
 
 func createDrawingResources() {
-	backgroundBrush, _, _ = procCreateSolidBrush.Call(rgb(27, 32, 42))
-	fontClock = createFont(72, 400, "Consolas")
-	fontDate = createFont(20, 400, "Yu Gothic UI")
-	fontWeather = createFont(22, 600, "Yu Gothic UI")
-	fontDetails = createFont(17, 400, "Yu Gothic UI")
+	backgroundBrush, _, _ = procCreateSolidBrush.Call(rgb(14, 19, 28))
+	fontClock = createFont(50, 300, "Consolas")
+	fontDate = createFont(17, 500, "Yu Gothic UI")
+	fontWeather = createFont(21, 600, "Yu Gothic UI")
+	fontDetails = createFont(14, 500, "Yu Gothic UI")
+	fontPrimaryLabel = createFont(17, 600, "Yu Gothic UI")
+	fontSecondaryLabel = createFont(15, 600, "Yu Gothic UI")
+	fontPrimaryDescription = createFont(16, 500, "Yu Gothic UI")
+	fontMetricLabel = createFont(11, 500, "Yu Gothic UI")
+	fontPrimaryValue = createFont(22, 600, "Yu Gothic UI")
+	fontSecondaryValue = createFont(20, 600, "Yu Gothic UI")
+	fontSmall = createFont(11, 400, "Yu Gothic UI")
+	fontVersion = createFont(10, 500, "Yu Gothic UI")
 }
 
 func deleteDrawingResources() {
-	for _, object := range []uintptr{backgroundBrush, fontClock, fontDate, fontWeather, fontDetails} {
+	for _, object := range []uintptr{
+		backgroundBrush,
+		fontClock,
+		fontDate,
+		fontWeather,
+		fontDetails,
+		fontPrimaryLabel,
+		fontSecondaryLabel,
+		fontPrimaryDescription,
+		fontMetricLabel,
+		fontPrimaryValue,
+		fontSecondaryValue,
+		fontSmall,
+		fontVersion,
+	} {
 		if object != 0 {
 			procDeleteObject.Call(object)
 		}

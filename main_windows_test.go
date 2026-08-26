@@ -104,6 +104,18 @@ func TestResizeHitTest(t *testing.T) {
 	}
 }
 
+func TestForecastCardRectsMatchesMacLayout(t *testing.T) {
+	got := forecastCardRects(rect{Left: 0, Top: 0, Right: 760, Bottom: 425})
+	want := [3]rect{
+		{Left: 24, Top: 127, Right: 312, Bottom: 401},
+		{Left: 324, Top: 127, Right: 524, Bottom: 401},
+		{Left: 536, Top: 127, Right: 736, Bottom: 401},
+	}
+	if got != want {
+		t.Fatalf("forecastCardRects() = %#v, want %#v", got, want)
+	}
+}
+
 func TestWeatherIconForDescription(t *testing.T) {
 	tests := []struct {
 		description string

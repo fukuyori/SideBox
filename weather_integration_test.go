@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestWeatherClientLive(t *testing.T) {
@@ -29,11 +30,17 @@ func TestWeatherClientLive(t *testing.T) {
 			if report.Humidity == nil {
 				t.Fatalf("today's humidity was not completed: %+v", report)
 			}
-			if len(report.Daily) < 3 || report.Daily[2].TemperatureMin == nil || report.Daily[2].TemperatureMax == nil || report.Daily[2].PrecipitationProbability == nil {
-				t.Fatalf("day-after forecast was not completed: %+v", report.Daily)
+			today := time.Now().In(report.Daily[0].Date.Location()).Format("2006-01-02")
+			if got := report.Daily[0].Date.Format("2006-01-02"); got != today {
+				t.Fatalf("today date = %s, want %s", got, today)
 			}
 			t.Logf("%s: min %.1f, max %.1f, humidity %d", report.Location, *report.Daily[0].TemperatureMin, *report.Daily[0].TemperatureMax, *report.Humidity)
-			t.Logf("day after: min %.1f, max %.1f, rain %d", *report.Daily[2].TemperatureMin, *report.Daily[2].TemperatureMax, *report.Daily[2].PrecipitationProbability)
+			if len(report.Daily) >= 3 {
+				if report.Daily[2].TemperatureMin == nil || report.Daily[2].TemperatureMax == nil || report.Daily[2].PrecipitationProbability == nil {
+					t.Fatalf("day-after forecast was incomplete: %+v", report.Daily[2])
+				}
+				t.Logf("day after: min %.1f, max %.1f, rain %d", *report.Daily[2].TemperatureMin, *report.Daily[2].TemperatureMax, *report.Daily[2].PrecipitationProbability)
+			}
 		})
 	}
 }
