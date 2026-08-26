@@ -443,16 +443,12 @@ static CGFloat SideboxNumber(NSDictionary *dictionary, NSString *key, CGFloat fa
               primary:(BOOL)primary
              humidity:(id)humidity {
     NSBezierPath *card = [NSBezierPath bezierPathWithRoundedRect:rect xRadius:16 yRadius:16];
-    NSColor *cardColor = primary
-        ? [NSColor colorWithRed:0.09 green:0.17 blue:0.25 alpha:0.98]
-        : [NSColor colorWithRed:0.09 green:0.115 blue:0.16 alpha:0.96];
+    NSColor *cardColor = [NSColor colorWithRed:0.09 green:0.115 blue:0.16 alpha:0.96];
     [cardColor setFill];
     [card fill];
-    NSColor *borderColor = primary
-        ? [NSColor colorWithRed:0.32 green:0.69 blue:1.0 alpha:0.44]
-        : [NSColor colorWithWhite:1.0 alpha:0.08];
+    NSColor *borderColor = [NSColor colorWithWhite:1.0 alpha:0.08];
     [borderColor setStroke];
-    card.lineWidth = primary ? 1.5 : 1;
+    card.lineWidth = 1;
     [card stroke];
 
     NSString *description = SideboxString(forecast, @"description");

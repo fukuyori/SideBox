@@ -543,9 +543,6 @@ func drawForecastCard(hdc uintptr, forecast dailyForecast, bounds rect, primary 
 	valueFont := fontSecondaryValue
 	labelColor := rgb(191, 191, 191)
 	if primary {
-		fillColor = rgb(23, 43, 64)
-		borderColor = rgb(49, 102, 148)
-		borderWidth = 2
 		labelFont = fontPrimaryLabel
 		descriptionFont = fontPrimaryDescription
 		valueFont = fontPrimaryValue
