@@ -6,6 +6,8 @@ WindowsまたはmacOSのデスクトップに、デジタル時計と気象庁�
 
 リポジトリ: [fukuyori/SideBox](https://github.com/fukuyori/SideBox)
 
+![Sidebox 0.3.2のスクリーンショット](images/screenshot.png)
+
 ## 表示内容
 
 - 現在時刻（秒単位）、日付、`Sidebox 0.3.2` のバージョン表示
