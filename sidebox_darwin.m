@@ -640,8 +640,9 @@ static CGFloat SideboxNumber(NSDictionary *dictionary, NSString *key, CGFloat fa
     self.window.hasShadow = YES;
     self.window.movableByWindowBackground = YES;
     self.window.minSize = NSMakeSize(680, 380);
+    // Join desktop Spaces without overlaying other applications' fullscreen Spaces.
     self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                     NSWindowCollectionBehaviorFullScreenAuxiliary;
+                                     NSWindowCollectionBehaviorFullScreenNone;
     self.window.alphaValue = MIN(1.0, MAX(0.35, SideboxNumber(self.initialConfig, @"opacity", 0.94)));
     self.window.level = [self.initialConfig[@"always_on_top"] boolValue]
         ? NSFloatingWindowLevel : NSNormalWindowLevel;

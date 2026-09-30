@@ -20,17 +20,20 @@ const (
 	windowWidth  = 760
 	windowHeight = 425
 
-	csHRedraw    = 0x0002
-	csVRedraw    = 0x0001
-	csDblClks    = 0x0008
-	wsPopup      = 0x80000000
-	wsThickFrame = 0x00040000
-	wsExLayered  = 0x00080000
-	wsExToolWin  = 0x00000080
+	csHRedraw      = 0x0002
+	csVRedraw      = 0x0001
+	csDblClks      = 0x0008
+	wsPopup        = 0x80000000
+	wsThickFrame   = 0x00040000
+	wsExLayered    = 0x00080000
+	wsExToolWin    = 0x00000080
+	wsExNoActivate = 0x08000000
 
-	swShow                = 5
+	swShowNoActivate      = 4
+	hwndBottom            = 1
 	swpNoMove             = 0x0002
 	swpNoSize             = 0x0001
+	swpNoZOrder           = 0x0004
 	swpNoActivate         = 0x0010
 	lwaAlpha              = 0x00000002
 	mmText                = 1
@@ -43,6 +46,9 @@ const (
 	wmEraseBkgnd          = 0x0014
 	wmNCCalcSize          = 0x0083
 	wmNCHitTest           = 0x0084
+	wmMouseActivate       = 0x0021
+	wmWindowPosChanging   = 0x0046
+	maNoActivate          = 3
 	wmContextMenu         = 0x007B
 	wmNCRButtonDown       = 0x00A4
 	wmNCRButtonUp         = 0x00A5
@@ -98,6 +104,11 @@ const (
 
 type point struct{ X, Y int32 }
 type rect struct{ Left, Top, Right, Bottom int32 }
+type windowPos struct {
+	Hwnd, InsertAfter uintptr
+	X, Y, CX, CY      int32
+	Flags             uint32
+}
 type msg struct {
 	Hwnd     uintptr
 	Message  uint32
@@ -263,7 +274,7 @@ func main() {
 	}
 
 	hwnd, _, callErr := procCreateWindowEx.Call(
-		wsExLayered|wsExToolWin,
+		wsExLayered|wsExToolWin|wsExNoActivate,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(utf16Ptr(appName+" "+appVersion))),
 		wsPopup|wsThickFrame,
@@ -275,7 +286,7 @@ func main() {
 		return
 	}
 	applyWindowOptions(hwnd, cfg)
-	procShowWindow.Call(hwnd, swShow)
+	procShowWindow.Call(hwnd, swShowNoActivate)
 	procUpdateWindow.Call(hwnd)
 	startWeatherRetries(hwnd)
 
@@ -308,6 +319,17 @@ func acquireSingleInstanceMutex(name string) (handle uintptr, alreadyRunning boo
 
 func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	switch message {
+	case wmMouseActivate:
+		// Keep mouse input (dragging, resizing, menus) without taking focus.
+		return maNoActivate
+	case wmWindowPosChanging:
+		if lParam != 0 {
+			position := (*windowPos)(unsafe.Pointer(lParam))
+			if position.Flags&swpNoZOrder == 0 {
+				position.InsertAfter = hwndBottom
+			}
+		}
+		// Preserve default sizing constraints handled by DefWindowProc.
 	case wmNCCalcSize:
 		return 0
 	case wmNCHitTest:
@@ -1001,11 +1023,8 @@ func openConfigFile() {
 }
 
 func applyWindowOptions(hwnd uintptr, cfg appConfig) {
-	insertAfter := ^uintptr(0) // HWND_TOPMOST
-	if !cfg.AlwaysOnTop {
-		insertAfter = ^uintptr(1) // HWND_NOTOPMOST
-	}
-	procSetWindowPos.Call(hwnd, insertAfter, 0, 0, uintptr(cfg.WindowWidth), uintptr(cfg.WindowHeight), swpNoMove|swpNoActivate)
+	// Windows always stays behind other applications, including after config reload.
+	procSetWindowPos.Call(hwnd, hwndBottom, 0, 0, uintptr(cfg.WindowWidth), uintptr(cfg.WindowHeight), swpNoMove|swpNoActivate)
 	alpha := byte(cfg.Opacity*255 + 0.5)
 	procSetLayeredWindowAttrs.Call(hwnd, 0, uintptr(alpha), lwaAlpha)
 	updateWindowRegion(hwnd, cfg.WindowWidth, cfg.WindowHeight)
